@@ -17,9 +17,11 @@ FEEDS = [
     "https://stackoverflow.com/feeds",
 ]
 
+
 def get_db():
     engine = create_engine(DATABASE_URL)
     return sessionmaker(bind=engine)()
+
 
 def fetch_feed(url: str):
     """Parse RSS feed and return entries."""
@@ -28,18 +30,21 @@ def fetch_feed(url: str):
         entries = []
         for e in d.entries[:20]:
             link = e.get("link", "")
-            entries.append({
-                "external_id": e.get("id") or link or str(uuid.uuid4()),
-                "title": e.get("title", ""),
-                "content": e.get("summary", "") or e.get("description", "") or "",
-                "url": link,
-                "author": e.get("author"),
-                "created_at": None,
-            })
+            entries.append(
+                {
+                    "external_id": e.get("id") or link or str(uuid.uuid4()),
+                    "title": e.get("title", ""),
+                    "content": e.get("summary", "") or e.get("description", "") or "",
+                    "url": link,
+                    "author": e.get("author"),
+                    "created_at": None,
+                }
+            )
         return entries
     except Exception as ex:
         print(f"Error fetching {url}: {ex}")
         return []
+
 
 def store_and_publish(db, redis_client, entries, source: str = "rss"):
     """Insert entries and publish events."""
@@ -47,11 +52,13 @@ def store_and_publish(db, redis_client, entries, source: str = "rss"):
         external_id = f"{source}:{e['external_id'][:200]}"
         try:
             db.execute(
-                text("""
+                text(
+                    """
                 INSERT INTO raw_posts (id, source, external_id, title, content, url, author, metadata)
                 VALUES (:id, :source, :external_id, :title, :content, :url, :author, '{}'::jsonb)
                 ON CONFLICT (external_id) DO NOTHING
-                """),
+                """
+                ),
                 {
                     "id": str(uuid.uuid4()),
                     "source": source,
@@ -91,3 +98,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

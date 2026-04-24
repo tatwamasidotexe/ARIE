@@ -44,19 +44,21 @@ def scrape_subreddit(reddit, subreddit_name: str, limit: int = 25):
     sub = reddit.subreddit(subreddit_name)
     posts = []
     for post in sub.hot(limit=limit):
-        posts.append({
-            "external_id": post.id,
-            "title": post.title,
-            "content": post.selftext or "",
-            "url": f"https://reddit.com{post.permalink}",
-            "author": str(post.author) if post.author else None,
-            "created_at": datetime.fromtimestamp(post.created_utc).isoformat(),
-            "metadata": {
-                "subreddit": subreddit_name,
-                "score": post.score,
-                "num_comments": post.num_comments,
-            },
-        })
+        posts.append(
+            {
+                "external_id": post.id,
+                "title": post.title,
+                "content": post.selftext or "",
+                "url": f"https://reddit.com{post.permalink}",
+                "author": str(post.author) if post.author else None,
+                "created_at": datetime.fromtimestamp(post.created_utc).isoformat(),
+                "metadata": {
+                    "subreddit": subreddit_name,
+                    "score": post.score,
+                    "num_comments": post.num_comments,
+                },
+            }
+        )
     return posts
 
 
@@ -66,12 +68,14 @@ def store_and_publish(db, redis_client, posts):
         external_id = f"reddit:{p['external_id']}"
         try:
             db.execute(
-                text("""
+                text(
+                    """
                 INSERT INTO raw_posts (id, source, external_id, title, content, url, author, created_at, metadata)
                 VALUES (:id, 'reddit', :external_id, :title, :content, :url, :author,
                         COALESCE((:created_at)::timestamptz, NOW()), :metadata::jsonb)
                 ON CONFLICT (external_id) DO NOTHING
-                """),
+                """
+                ),
                 {
                     "id": str(uuid.uuid4()),
                     "external_id": external_id,
@@ -119,3 +123,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
