@@ -1,0 +1,1 @@
+"""ARIE Backend application."""
