@@ -15,10 +15,22 @@ def list_insights(
     db: Session,
     limit: int = 20,
     min_confidence: Optional[float] = None,
+    source: Optional[str] = None,
 ) -> List[InsightReport]:
-    q = db.query(InsightReport).order_by(desc(InsightReport.created_at))
+    q = (
+        db.query(InsightReport)
+        .join(Problem, InsightReport.problem_id == Problem.id)
+        .join(Document, Document.id == text("ANY(problems.document_ids)"))
+        .join(RawPost, RawPost.id == Document.raw_post_id)
+        .order_by(desc(InsightReport.created_at))
+    )
+
     if min_confidence is not None:
         q = q.filter(InsightReport.confidence_score >= min_confidence)
+
+    if source:
+        q = q.filter(RawPost.source == source)
+
     return q.limit(limit).all()
 
 

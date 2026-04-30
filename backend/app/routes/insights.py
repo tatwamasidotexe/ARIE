@@ -16,6 +16,7 @@ def query_insights(
     limit: int = 20,
     min_confidence: Optional[float] = None,
     db: Session = Depends(get_db),
+    source: Optional[str] = None, 
 ):
     """List insights with optional confidence filter."""
     reports = list_insights(db, limit=limit, min_confidence=min_confidence)
