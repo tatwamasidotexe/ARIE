@@ -9,8 +9,8 @@ Production-style AI platform that monitors internet discussions, detects emergin
 │  Next.js    │────▶│   FastAPI    │────▶│  PostgreSQL │
 │  Dashboard  │     │   Backend    │     │  + pgvector │
 └─────────────┘     └──────┬───────┘     └─────────────┘
-                          │
-                          ▼
+                           │
+                           ▼
                     ┌──────────────┐
                     │ Redis Streams│
                     └──────┬───────┘
@@ -75,7 +75,7 @@ Copy `.env.example` to `.env` and configure:
 
 | Component | Description |
 |-----------|-------------|
-| **Ingestion** | Reddit API scraper, RSS feed fetcher |
+| **Ingestion** | RSS feed fetcher |
 | **Agents** | Problem detection, Research, Debate, Synthesis, Governance |
 | **Workflows** | Redis Streams event-driven pipeline |
 | **Backend** | FastAPI REST API |
