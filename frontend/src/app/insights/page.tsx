@@ -20,7 +20,7 @@ export default function InsightsPage() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-bold">Reports</h1>
+        <h1 className="text-2xl font-bold">Insight Reports</h1>
         <div className="grid gap-3">
           {[1, 2, 3, 4].map((i) => (
             <div
@@ -33,6 +33,10 @@ export default function InsightsPage() {
     );
   }
 
+  const filteredInsights = insights.filter(
+    (r) => r.confidence_score > 0.4
+  );
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
@@ -42,13 +46,14 @@ export default function InsightsPage() {
         Structured reports with evidence, root causes, and solutions
       </p>
 
-      {insights.length === 0 ? (
+      {filteredInsights.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-12 text-center text-zinc-500">
-          No reports yet. Ingest data and run the worker to generate insights.
+          {/* No reports yet. Ingest data and run the worker to generate insights. */}
+          No high-confidence insights found. Try adjusting filters or ingesting more data.
         </div>
       ) : (
         <div className="grid gap-3">
-          {insights.map((r) => (
+          {filteredInsights.map((r) => (
             <Link
               key={r.id}
               href={`/reports/${r.id}`}
