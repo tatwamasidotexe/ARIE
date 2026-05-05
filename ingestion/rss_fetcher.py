@@ -1,9 +1,12 @@
 """RSS feed fetcher - fetches blog posts and publishes to Redis Stream."""
+from workflows.worker import store_document_and_run_pipeline
+
 import uuid
 from datetime import datetime
+import time
 
 import feedparser
-import redis
+# import redis
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -21,8 +24,14 @@ FEEDS = [
 
 
 def get_db():
-    engine = create_engine(DATABASE_URL)
-    return sessionmaker(bind=engine)()
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True, #checks if connection is alive
+        pool_recycle=300 # refreshes connection after 5 mins
+    )
+    # return sessionmaker(bind=engine)()
+
+    return engine, sessionmaker(bind=engine)()
 
 
 def fetch_feed(url: str):
@@ -58,8 +67,9 @@ def fetch_feed(url: str):
         print(f"Error fetching {url}: {ex}")
         return []
 
-def fetch_hn_comments(item_id: str, max_comments: int = 20) -> str:
+def fetch_hn_comments(item_id: str, max_comments: int = 5) -> str:
     """Fetch top-level HN comments and return as text."""
+    print(f"Fetching HN comments for item: {item_id}")
     try:
         url = f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
         data = requests.get(url, timeout=5).json()
@@ -68,7 +78,11 @@ def fetch_hn_comments(item_id: str, max_comments: int = 20) -> str:
             return ""
 
         comments = []
+        start_time = time.time()
         for cid in data["kids"][:max_comments]:
+            # stop if total time exceeds 2 seconds
+            if time.time() - start_time > 2:
+                break
             cdata = requests.get(
                 f"https://hacker-news.firebaseio.com/v0/item/{cid}.json",
                 timeout=5
@@ -83,9 +97,10 @@ def fetch_hn_comments(item_id: str, max_comments: int = 20) -> str:
         print(f"HN comment fetch error: {e}")
         return ""
 
-def store_and_publish(db, redis_client, entries, source: str = "rss"):
+def store_and_publish(engine, db, entries, source: str = "rss"):
     """Insert entries and publish events."""
-    for e in entries:
+    for i, e in enumerate(entries):
+        print(f"Storing entry {i+1}/{len(entries)}")
         external_id = f"{source}:{e['external_id'][:200]}"
         try:
             db.execute(
@@ -111,21 +126,34 @@ def store_and_publish(db, redis_client, entries, source: str = "rss"):
                 text("SELECT id FROM raw_posts WHERE external_id = :eid"),
                 {"eid": external_id},
             ).fetchone()
+            # if row:
+            #     redis_client.xadd(
+            #         STREAM_NEW_POST,
+            #         {"raw_post_id": str(row[0]), "source": source},
+            #         maxlen=10000,
+            #     )
             if row:
-                redis_client.xadd(
-                    STREAM_NEW_POST,
-                    {"raw_post_id": str(row[0]), "source": source},
-                    maxlen=10000,
+                raw_post_id = str(row[0])
+                print(f"Running pipeline for: {e['title'][:50]}...")
+                
+                store_document_and_run_pipeline(
+                    # db.bind,  # engine
+                    engine,
+                    raw_post_id,
+                    source,
+                    e["title"],
+                    e.get("content") or ""
                 )
         except Exception as err:
             db.rollback()
             print(f"Error storing {external_id}: {err}")
-
+    print(f"Committed {len(entries)} entries")
 
 def main():
-    db = get_db()
-    r = redis.from_url(REDIS_URL)
+    engine, db = get_db()
+    # r = redis.from_url(REDIS_URL)
     for url in FEEDS:
+        print(f"Processing feed: {url}")
         entries = fetch_feed(url)
         print(f"Fetched {len(entries)} raw entries from {url}")
         if entries:
@@ -140,7 +168,7 @@ def main():
                 source = "aws"
             else:
                 source = "rss"
-            store_and_publish(db, r, entries, source=source)
+            store_and_publish(engine, db, entries, source=source)
             print(f"Fetched {len(entries)} entries from {url[:50]}...")
     db.close()
 
