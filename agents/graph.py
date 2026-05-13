@@ -27,7 +27,7 @@ class AgentState(TypedDict):
 
 
 def _get_llm():
-    return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.3)
+    return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.3) # SAMPLING PARAMETER!!! super deterministic atm
 
 
 def problem_detection_node(state: AgentState) -> AgentState:
@@ -45,7 +45,7 @@ def problem_detection_node(state: AgentState) -> AgentState:
     summary = out.content.strip() if hasattr(out, "content") else str(out)
     return {**state, "problem_summary": summary or state.get("problem_summary", "Unknown problem")}
 
-
+# this node doesnt actually use the llm. only creates research context for the next node by performing the vector search
 def research_node(state: AgentState) -> AgentState:
     """Retrieve related discussions via vector search and build RAG context."""
     problem = state.get("problem_summary", "")
@@ -63,7 +63,7 @@ def research_node(state: AgentState) -> AgentState:
         "sources": sources,
     }
 
-
+# 3 llm calls - 3 perspectives
 def debate_node(state: AgentState) -> AgentState:
     """Multiple perspectives on root causes."""
     llm = _get_llm()
@@ -94,21 +94,20 @@ def synthesis_node(state: AgentState) -> AgentState:
     debates = state.get("debate_outputs", [])
 
     prompt = f"""Problem: {problem}
+    Research context:
+    {ctx[:6000]}
 
-Research context:
-{ctx[:6000]}
+    Debate perspectives:
+    {chr(10).join(f"- {d.get('explanation', d)}" for d in debates)}
 
-Debate perspectives:
-{chr(10).join(f"- {d.get('explanation', d)}" for d in debates)}
-
-Produce a structured JSON report:
-{{
-  "problem_summary": "1-2 sentence summary",
-  "evidence": ["evidence1", "evidence2"],
-  "root_causes": ["cause1", "cause2"],
-  "solutions": ["solution1", "solution2"]
-}}
-Output ONLY valid JSON, no markdown."""
+    Produce a structured JSON report:
+    {{
+        "problem_summary": "1-2 sentence summary",
+        "evidence": ["evidence1", "evidence2"],
+        "root_causes": ["cause1", "cause2"],
+        "solutions": ["solution1", "solution2"]
+    }}
+    Output ONLY valid JSON, no markdown."""
     out = llm.invoke([HumanMessage(content=prompt)])
     text = out.content if hasattr(out, "content") else str(out)
     try:

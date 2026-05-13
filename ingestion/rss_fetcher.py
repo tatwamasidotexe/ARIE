@@ -37,9 +37,9 @@ def get_db():
 def fetch_feed(url: str):
     """Parse RSS feed and return entries."""
     try:
-        d = feedparser.parse(url, agent="ARIE/1.0")
+        d = feedparser.parse(url, agent="ARIE/1.0") # fetches the whole feed
         entries = []
-        for e in d.entries[:20]:
+        for e in d.entries[:20]: # saving only the first 20 from the feed
             link = e.get("link", "")
             comments_link = e.get("comments", "")
             hn_comments = ""
@@ -175,4 +175,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
