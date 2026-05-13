@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 
 try:
     from pgvector.sqlalchemy import Vector
-    _embedding_col = Vector(1536)
+    _embedding_col = Vector(384)
 except ImportError:
     _embedding_col = Column("embedding", JSONB)
 
