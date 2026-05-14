@@ -10,10 +10,6 @@ Production-style AI platform that monitors internet discussions, detects emergin
 │  Dashboard  │     │   Backend    │     │  + pgvector │
 └─────────────┘     └──────┬───────┘     └─────────────┘
                            │
-                           ▼
-                    ┌──────────────┐
-                    │ Redis Streams│
-                    └──────┬───────┘
                            │
            ┌───────────────┼───────────────┐
            ▼               ▼               ▼
@@ -26,10 +22,11 @@ Production-style AI platform that monitors internet discussions, detects emergin
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL 15+ with pgvector
-- Redis 7+
+- Redis 7+ (not required atm)
 
 ### Backend Setup
 
@@ -43,14 +40,15 @@ uvicorn app.main:app --reload
 ```
 
 ### Ingestion Service
+
 ```bash
 cd ingestion
 pip install -r requirements.txt
-python -m ingestion.reddit_scraper
 python -m ingestion.rss_fetcher
 ```
 
 ### Workers
+
 ```bash
 cd workflows
 pip install -r requirements.txt
@@ -58,6 +56,7 @@ python -m workflows.worker
 ```
 
 ### Frontend
+
 ```bash
 cd frontend
 npm install
@@ -65,23 +64,28 @@ npm run dev
 ```
 
 ### Environment Variables
+
 Copy `.env.example` to `.env` and configure:
+
 - `DATABASE_URL` - PostgreSQL connection string
-- `REDIS_URL` - Redis connection string
-- `OPENAI_API_KEY` - For embeddings and LLM
-- `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` - Reddit API
+- `REDIS_URL` - Redis connection string (not required atm)
+- `GROQ_API_KEY` - For embeddings and LLM
+- `HF_EMBEDDING_MODEL` - Embedding model
 
 ## Components
 
-| Component | Description |
-|-----------|-------------|
-| **Ingestion** | RSS feed fetcher |
-| **Agents** | Problem detection, Research, Debate, Synthesis, Governance |
-| **Workflows** | Redis Streams event-driven pipeline |
-| **Backend** | FastAPI REST API |
-| **Frontend** | Next.js dashboard for search and reports |
+
+| Component     | Description                                                |
+| ------------- | ---------------------------------------------------------- |
+| **Ingestion** | RSS feed fetcher                                           |
+| **Agents**    | Problem detection, Research, Debate, Synthesis, Governance |
+| **Workflows** | Synchronous orchestration pipeline to generate insights    |
+| **Backend**   | FastAPI REST API                                           |
+| **Frontend**  | Next.js dashboard for search and reports                   |
+
 
 ## Observability
 
 - **Prometheus**: Metrics exposed at `GET /metrics`
 - **OpenTelemetry**: Traces exported to OTLP endpoint (set `OTEL_EXPORTER_OTLP_ENDPOINT`)
+
