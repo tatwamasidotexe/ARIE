@@ -28,7 +28,7 @@ CREATE TABLE documents (
     source VARCHAR(50) NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(384),  -- Groq all-MiniLM-L6-v2 dimension
+    embedding vector(384),  -- BAAI/bge-small-en-v1.5
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     metadata JSONB DEFAULT '{}'
 );
@@ -70,8 +70,8 @@ CREATE INDEX idx_reports_confidence ON insight_reports(confidence_score DESC);
 CREATE INDEX idx_reports_created ON insight_reports(created_at DESC);
 
 -- Stream positions for Redis consumer groups
-CREATE TABLE stream_checkpoints (
-    stream_name VARCHAR(255) PRIMARY KEY,
-    last_id VARCHAR(100) NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- CREATE TABLE stream_checkpoints (
+--     stream_name VARCHAR(255) PRIMARY KEY,
+--     last_id VARCHAR(100) NOT NULL,
+--     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- );
