@@ -27,16 +27,16 @@ class AgentState(TypedDict):
 
 
 def _get_llm():
-    return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.3) # SAMPLING PARAMETER!!! super deterministic atm
+    return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.4) # SAMPLING PARAMETER!!! super deterministic atm
 
-
+# NODE 1
 def problem_detection_node(state: AgentState) -> AgentState:
     """Cluster/detect recurring problems from discussion content."""
     # In production, this would batch cluster documents. For single-doc flow, summarize.
     llm = _get_llm()
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You identify recurring problems or complaints from user discussions. Be concise."),
-        ("human", "Summarize the main problem or complaint in this discussion in 1-2 sentences:\n\n{content}"),
+        ("human", "Summarize the main problem or complaint in this discussion in 1-2 sentences (limit to 500 characters):\n\n{content}"),
     ])
     chain = prompt | llm
     # We need content - get from research context or a placeholder
@@ -45,6 +45,7 @@ def problem_detection_node(state: AgentState) -> AgentState:
     summary = out.content.strip() if hasattr(out, "content") else str(out)
     return {**state, "problem_summary": summary or state.get("problem_summary", "Unknown problem")}
 
+# NODE 2
 # this node doesnt actually use the llm. only creates research context for the next node by performing the vector search
 def research_node(state: AgentState) -> AgentState:
     """Retrieve related discussions via vector search and build RAG context."""
@@ -55,7 +56,7 @@ def research_node(state: AgentState) -> AgentState:
     context_parts = []
     sources = []
     for d in docs:
-        context_parts.append(f"[{d['source']}] {d['title']}\n{d['content'][:1500]}")
+        context_parts.append(f"[{d['source']}] {d['title']}\n{d['content']}")
         sources.append({"title": d["title"], "source": d["source"], "similarity": d["similarity"]})
     return {
         **state,
@@ -63,18 +64,19 @@ def research_node(state: AgentState) -> AgentState:
         "sources": sources,
     }
 
+# NODE 3
 # 3 llm calls - 3 perspectives
 def debate_node(state: AgentState) -> AgentState:
     """Multiple perspectives on root causes."""
     llm = _get_llm()
-    ctx = state.get("research_context", "")[:4000]
+    ctx = state.get("research_context", "")
     problem = state.get("problem_summary", "")
 
     perspectives = []
     prompts = [
-        "From a technical/engineering perspective, what might cause this?",
-        "From a product/UX perspective, what might cause this?",
-        "From a business/organizational perspective, what might cause this?",
+        "From technical/engineering perspective, what might cause this?",
+        "From product/UX perspective, what might cause this?",
+        "From business/organizational perspective, what might cause this?",
     ]
     for p in prompts:
         out = llm.invoke([
@@ -85,7 +87,7 @@ def debate_node(state: AgentState) -> AgentState:
 
     return {**state, "debate_outputs": perspectives}
 
-
+# NODE 4
 def synthesis_node(state: AgentState) -> AgentState:
     """Combine research and debate into structured report."""
     llm = _get_llm()
@@ -95,7 +97,7 @@ def synthesis_node(state: AgentState) -> AgentState:
 
     prompt = f"""Problem: {problem}
     Research context:
-    {ctx[:6000]}
+    {ctx}
 
     Debate perspectives:
     {chr(10).join(f"- {d.get('explanation', d)}" for d in debates)}
@@ -123,14 +125,14 @@ def synthesis_node(state: AgentState) -> AgentState:
         }
     return {**state, "final_report": report}
 
-
+# NODE 5
 def governance_node(state: AgentState) -> AgentState:
     """Check hallucinations and assign confidence score."""
     report = state.get("final_report") or {}
     sources = state.get("sources", [])
     n_sources = len(sources)
     avg_sim = sum(s.get("similarity", 0) for s in sources) / max(n_sources, 1)
-    # Simple heuristic: more sources + higher similarity = higher confidence
+    # simple heuristic: more sources + higher similarity = higher confidence
     confidence = min(0.95, 0.3 + 0.3 * min(n_sources / 5, 1) + 0.35 * avg_sim)
     governance_checks = {
         "sources_verified": n_sources > 0,
@@ -167,7 +169,7 @@ def run_pipeline(raw_post_id: str, title: str, content: str) -> dict:
     """Run the full pipeline for a new post."""
     initial: AgentState = {
         "raw_post_id": raw_post_id,
-        "problem_summary": f"{title}\n{content}"[:500],
+        "problem_summary": f"{title}\n{content}",
         "evidence": [],
         "root_causes": [],
         "solutions": [],

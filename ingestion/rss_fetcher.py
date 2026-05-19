@@ -1,5 +1,4 @@
-"""RSS feed fetcher — staged ingestion: ingest → embed → insight pipeline."""
-import json
+"""RSS feed fetcher — Stage 1: ingest and store raw_posts only."""
 import logging
 import time
 import uuid
@@ -9,8 +8,6 @@ import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from agents.embeddings import store_document
-from agents.graph import run_pipeline
 from ingestion.config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
@@ -140,196 +137,67 @@ def store_raw_post(db, entry: dict, source: str) -> str | None:
         db.commit()
         if row:
             return str(row[0])
-        logger.debug("Skipped duplicate raw post: %s", external_id)
         return None
     except Exception as exc:
         db.rollback()
-        logger.error("Error storing raw post %s: %s", external_id, exc)
-        return None
+        logger.error("Failed to store %s: %s", external_id, exc)
+        raise
 
 
-def ingest_all_feeds(db, feeds: list[str]) -> list[dict]:
-    """Phase 1: fetch feeds and store all raw posts."""
-    stored_posts: list[dict] = []
-    logger.info("=== PHASE 1: INGEST + STORE RAW POSTS ===")
+def ingest_feed(db, url: str) -> dict[str, int]:
+    """Ingest one feed. Returns counts: fetched, inserted, skipped, failed."""
+    source = resolve_source(url)
+    logger.info("Fetching feed: %s (source=%s)", url, source)
 
-    for url in feeds:
-        source = resolve_source(url)
-        logger.info("Fetching feed: %s (source=%s)", url, source)
-        entries = fetch_feed(url)
-        logger.info("Parsed %d entries from %s", len(entries), url)
+    entries = fetch_feed(url)
+    fetched = len(entries)
+    inserted = 0
+    skipped = 0
+    failed = 0
 
-        for i, entry in enumerate(entries, start=1):
+    logger.info("Fetched %d entries from %s", fetched, url)
+
+    for entry in entries:
+        try:
             raw_post_id = store_raw_post(db, entry, source)
             if raw_post_id:
-                stored_posts.append(
-                    {
-                        "raw_post_id": raw_post_id,
-                        "source": source,
-                        "title": entry["title"],
-                        "content": entry.get("content") or "",
-                    }
-                )
-                logger.info(
-                    "Stored raw post %d/%d: %s",
-                    i,
-                    len(entries),
-                    entry["title"][:80],
-                )
+                inserted += 1
+                logger.debug("Inserted: %s", entry["title"][:80])
+            else:
+                skipped += 1
+        except Exception:
+            failed += 1
 
     logger.info(
-        "Phase 1 complete: %d new raw posts stored across %d feeds",
-        len(stored_posts),
-        len(feeds),
+        "Feed %s — fetched=%d inserted=%d skipped=%d failed=%d",
+        url,
+        fetched,
+        inserted,
+        skipped,
+        failed,
     )
-    return stored_posts
+    return {"fetched": fetched, "inserted": inserted, "skipped": skipped, "failed": failed}
 
 
-def generate_embeddings(stored_posts: list[dict]) -> dict[str, str]:
-    """Phase 2: embed all stored posts after corpus ingestion."""
-    doc_ids: dict[str, str] = {}
-    total = len(stored_posts)
-    logger.info("=== PHASE 2: GENERATE EMBEDDINGS (%d posts) ===", total)
+def ingest_all_feeds(db, feeds: list[str]) -> dict[str, int]:
+    """Ingest all configured feeds and return aggregate counts."""
+    totals = {"fetched": 0, "inserted": 0, "skipped": 0, "failed": 0}
 
-    for i, post in enumerate(stored_posts, start=1):
-        raw_post_id = post["raw_post_id"]
-        title = post["title"]
-        content = post["content"] or title
-        try:
-            doc_id = store_document(raw_post_id, post["source"], title, content)
-            doc_ids[raw_post_id] = doc_id
-            logger.info(
-                "Embedded %d/%d: %s (doc_id=%s)",
-                i,
-                total,
-                title[:80],
-                doc_id,
-            )
-        except Exception as exc:
-            logger.error(
-                "Embedding failed %d/%d for raw_post_id=%s: %s",
-                i,
-                total,
-                raw_post_id,
-                exc,
-            )
+    logger.info("=== STAGE 1: INGEST RAW DATA ===")
+
+    for url in feeds:
+        counts = ingest_feed(db, url)
+        for key in totals:
+            totals[key] += counts[key]
 
     logger.info(
-        "Phase 2 complete: %d/%d embeddings generated",
-        len(doc_ids),
-        total,
+        "Ingestion complete — fetched=%d inserted=%d skipped=%d failed=%d",
+        totals["fetched"],
+        totals["inserted"],
+        totals["skipped"],
+        totals["failed"],
     )
-    return doc_ids
-
-
-def store_pipeline_report(engine, doc_id: str, report: dict) -> None:
-    """Persist problem and insight report from pipeline output."""
-    problem_id = str(uuid.uuid4())
-    with engine.connect() as conn:
-        conn.execute(
-            text(
-                """
-                INSERT INTO problems (id, summary, frequency_score, document_ids, status)
-                VALUES (:id, :summary, 1.0, ARRAY[CAST(:doc_id AS uuid)], 'synthesized')
-                """
-            ),
-            {
-                "id": problem_id,
-                "summary": report.get("problem_summary", "Unknown"),
-                "doc_id": doc_id,
-            },
-        )
-        conn.execute(
-            text(
-                """
-                INSERT INTO insight_reports (
-                    id, problem_id, problem_summary,
-                    evidence, root_causes, solutions,
-                    confidence_score, sources, governance_checks
-                )
-                VALUES (
-                    :id, :problem_id, :problem_summary,
-                    CAST(:evidence AS jsonb),
-                    CAST(:root_causes AS jsonb),
-                    CAST(:solutions AS jsonb),
-                    :confidence_score,
-                    CAST(:sources AS jsonb),
-                    CAST(:governance AS jsonb)
-                )
-                """
-            ),
-            {
-                "id": str(uuid.uuid4()),
-                "problem_id": problem_id,
-                "problem_summary": report.get("problem_summary", ""),
-                "evidence": json.dumps(report.get("evidence", [])),
-                "root_causes": json.dumps(report.get("root_causes", [])),
-                "solutions": json.dumps(report.get("solutions", [])),
-                "confidence_score": report.get("confidence_score", 0.5),
-                "sources": json.dumps(report.get("sources", [])),
-                "governance": json.dumps(report.get("governance_checks", {})),
-            },
-        )
-        conn.commit()
-    logger.info(
-        "Stored report for problem: %s",
-        report.get("problem_summary", "")[:80],
-    )
-
-
-def run_insight_pipeline(
-    engine, stored_posts: list[dict], doc_ids: dict[str, str]
-) -> None:
-    """Phase 3: run insight pipeline after full corpus embedding."""
-    total = len(stored_posts)
-    logger.info("=== PHASE 3: RUN INSIGHT PIPELINE (%d posts) ===", total)
-
-    succeeded = 0
-    for i, post in enumerate(stored_posts, start=1):
-        raw_post_id = post["raw_post_id"]
-        title = post["title"]
-        content = post["content"] or title
-        doc_id = doc_ids.get(raw_post_id)
-
-        if not doc_id:
-            logger.warning(
-                "Skipping pipeline %d/%d — no document for raw_post_id=%s",
-                i,
-                total,
-                raw_post_id,
-            )
-            continue
-
-        try:
-            logger.info(
-                "Running pipeline %d/%d: %s",
-                i,
-                total,
-                title[:80],
-            )
-            report = run_pipeline(raw_post_id, title, content)
-            if not report:
-                logger.warning(
-                    "Pipeline returned empty report for raw_post_id=%s",
-                    raw_post_id,
-                )
-                continue
-            store_pipeline_report(engine, doc_id, report)
-            succeeded += 1
-        except Exception as exc:
-            logger.error(
-                "Pipeline failed %d/%d for raw_post_id=%s: %s",
-                i,
-                total,
-                raw_post_id,
-                exc,
-            )
-
-    logger.info(
-        "Phase 3 complete: %d/%d reports stored",
-        succeeded,
-        total,
-    )
+    return totals
 
 
 def main():
@@ -337,15 +205,9 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
-    engine, db = get_db()
+    _, db = get_db()
     try:
-        stored_posts = ingest_all_feeds(db, FEEDS)
-        if not stored_posts:
-            logger.info("No new posts ingested; skipping embedding and pipeline phases")
-            return
-
-        doc_ids = generate_embeddings(stored_posts)
-        run_insight_pipeline(engine, stored_posts, doc_ids)
+        ingest_all_feeds(db, FEEDS)
     finally:
         db.close()
 
