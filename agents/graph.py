@@ -4,11 +4,11 @@ from operator import add
 
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 import json
 
-from agents.embeddings import vector_search, store_document, get_embedding
+from agents.embeddings import vector_search
 from agents.config import GROQ_API_KEY, LLM_MODEL
 
 
@@ -40,7 +40,7 @@ def problem_detection_node(state: AgentState) -> AgentState:
     ])
     chain = prompt | llm
     # We need content - get from research context or a placeholder
-    content = state.get("research_context", state.get("problem_summary", "No content"))
+    content = state.get("problem_summary", state.get("research_context", "No content"))
     out = chain.invoke({"content": content})
     summary = out.content.strip() if hasattr(out, "content") else str(out)
     return {**state, "problem_summary": summary or state.get("problem_summary", "Unknown problem")}
@@ -52,11 +52,20 @@ def research_node(state: AgentState) -> AgentState:
     problem = state.get("problem_summary", "")
     if not problem:
         return state
-    docs = vector_search(problem, top_k=8)
+    docs = vector_search(problem, top_k=5)
+    docs = [d for d in docs if d["similarity"] >= 0.72] # SIMILARITY THRESHOLD
+
+    # ========== LOGGING =================
+    print("\n=== RETRIEVAL DEBUG ===")
+    print("QUERY:", problem)
+
+    for i, d in enumerate(docs, 1):
+        print(f"{i}. sim={d['similarity']:.3f} | {d['title'][:120]}")
+    # ====================================
     context_parts = []
     sources = []
     for d in docs:
-        context_parts.append(f"[{d['source']}] {d['title']}\n{d['content']}")
+        context_parts.append(f"[{d['source']}] {d['title']}\n{d['content'][:1500]}")
         sources.append({"title": d["title"], "source": d["source"], "similarity": d["similarity"]})
     return {
         **state,
