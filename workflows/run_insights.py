@@ -4,11 +4,10 @@ import json
 import logging
 import uuid
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from agents.graph import run_pipeline
-from ingestion.config import DATABASE_URL
+from database.db import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +27,6 @@ ALL_EMBEDDED_QUERY = """
     INNER JOIN documents d ON d.raw_post_id = r.id
     ORDER BY r.fetched_at
 """
-
-
-def get_db():
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
-    )
-    return engine, sessionmaker(bind=engine)()
-
 
 def fetch_posts_for_insights(db, force: bool) -> list[dict]:
     query = ALL_EMBEDDED_QUERY if force else UNPROCESSED_QUERY

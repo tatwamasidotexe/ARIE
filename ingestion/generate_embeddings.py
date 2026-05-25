@@ -2,11 +2,10 @@
 import argparse
 import logging
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from agents.embeddings import store_document
-from ingestion.config import DATABASE_URL
+from database.db import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +23,6 @@ ALL_RAW_POSTS_QUERY = """
     FROM raw_posts r
     ORDER BY r.fetched_at
 """
-
-
-def get_db():
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
-    )
-    return engine, sessionmaker(bind=engine)()
-
 
 def fetch_raw_posts(db, force: bool) -> list[dict]:
     query = ALL_RAW_POSTS_QUERY if force else UNEMBEDDED_QUERY

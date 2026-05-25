@@ -1,5 +1,7 @@
 """
 Redis Streams worker: new_post_event -> problem_detection -> research -> synthesis -> store_report
+
+DEPRECATED
 """
 import os
 import sys

@@ -1,12 +1,11 @@
 """Reddit API scraper - fetches posts and publishes to Redis Stream."""
-import os
 import uuid
 from datetime import datetime
 
 import redis
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
+from database.db import get_db
 from ingestion.config import (
     DATABASE_URL,
     REDIS_URL,
@@ -30,12 +29,6 @@ def get_reddit():
         client_secret=REDDIT_CLIENT_SECRET,
         user_agent=REDDIT_USER_AGENT,
     )
-
-
-def get_db():
-    engine = create_engine(DATABASE_URL)
-    return sessionmaker(bind=engine)()
-
 
 def scrape_subreddit(reddit, subreddit_name: str, limit: int = 25):
     """Fetch hot posts from a subreddit."""

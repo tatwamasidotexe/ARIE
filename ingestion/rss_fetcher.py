@@ -5,28 +5,33 @@ import uuid
 
 import feedparser
 import requests
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
+from bs4 import BeautifulSoup
+import html
+import re
 
-from ingestion.config import DATABASE_URL
+from database.db import get_db
 
 logger = logging.getLogger(__name__)
+
+def clean_text(text: str) -> str:
+    """Normalize RSS/HTML text into clean semantic text."""
+    if not text:
+        return ""
+
+    text = html.unescape(text)
+
+    text = BeautifulSoup(text, "html.parser").get_text(" ")
+
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
 
 FEEDS = [
     "https://hnrss.org/frontpage",
     "https://stackoverflow.com/feeds",
 ]
 FEED_ENTRY_LIMIT = 500
-
-
-def get_db():
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_recycle=300,
-    )
-    return engine, sessionmaker(bind=engine)()
-
 
 def extract_entry_content(entry) -> str:
     """Prefer full content, then summary, then description."""
@@ -59,7 +64,7 @@ def fetch_hn_comments(item_id: str, max_comments: int = 5) -> str:
                 timeout=5,
             ).json()
             if cdata and cdata.get("text"):
-                comments.append(cdata["text"])
+                comments.append(clean_text(cdata["text"]))
 
         return "\n\n".join(comments)
     except Exception as exc:
@@ -84,14 +89,14 @@ def fetch_feed(url: str) -> list[dict]:
                 except Exception:
                     pass
 
-            base_content = extract_entry_content(entry)
+            base_content = clean_text(extract_entry_content(entry))
             full_content = (
                 f"{base_content}\n\n{hn_comments}" if hn_comments else base_content
             )
             entries.append(
                 {
                     "external_id": entry.get("id") or link or str(uuid.uuid4()),
-                    "title": entry.get("title", ""),
+                    "title": clean_text(entry.get("title", "")),
                     "content": full_content,
                     "url": link,
                     "author": entry.get("author"),
