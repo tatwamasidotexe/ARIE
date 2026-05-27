@@ -1,5 +1,5 @@
 """
-Redis Streams worker: new_post_event -> problem_detection -> research -> synthesis -> store_report
+Redis Streams worker: new_post_event -> summarize_problem -> research -> synthesis -> store_report
 
 DEPRECATED
 """

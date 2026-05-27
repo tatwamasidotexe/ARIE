@@ -1,4 +1,4 @@
-"""LangGraph orchestration - problem detection, research, debate, synthesis, governance."""
+"""LangGraph orchestration - summarize problem, research, debate, synthesis, governance."""
 from typing import TypedDict, Annotated, Sequence
 from operator import add
 from functools import lru_cache
@@ -33,7 +33,7 @@ def _get_llm(temp: float):
     return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.4) # SAMPLING PARAMETER!!! super deterministic atm
 
 # NODE 1
-def problem_detection_node(state: AgentState) -> AgentState:
+def summarize_problem_node(state: AgentState) -> AgentState:
     """Cluster/detect recurring problems from discussion content."""
     # In production, this would batch cluster documents. For single-doc flow, summarize.
     llm = _get_llm(0.1)
@@ -171,14 +171,14 @@ def build_workflow():
     """Build the LangGraph workflow."""
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("problem_detection", problem_detection_node)
+    workflow.add_node("summarize_problem", summarize_problem_node)
     workflow.add_node("research", research_node)
     workflow.add_node("debate", debate_node)
     workflow.add_node("synthesis", synthesis_node)
     workflow.add_node("governance", governance_node)
 
-    workflow.set_entry_point("problem_detection")
-    workflow.add_edge("problem_detection", "research")
+    workflow.set_entry_point("summarize_problem")
+    workflow.add_edge("summarize_problem", "research")
     workflow.add_edge("research", "debate")
     workflow.add_edge("debate", "synthesis")
     workflow.add_edge("synthesis", "governance")
