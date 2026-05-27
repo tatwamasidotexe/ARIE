@@ -1,6 +1,7 @@
 """LangGraph orchestration - problem detection, research, debate, synthesis, governance."""
 from typing import TypedDict, Annotated, Sequence
 from operator import add
+from functools import lru_cache
 
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
@@ -26,16 +27,27 @@ class AgentState(TypedDict):
     final_report: dict | None
 
 
-def _get_llm():
+@lru_cache(maxsize=5)
+def _get_llm(temp: float):
+    """Return the shared LLM client for this worker process."""
     return ChatGroq(model=LLM_MODEL, api_key=GROQ_API_KEY, temperature=0.4) # SAMPLING PARAMETER!!! super deterministic atm
 
 # NODE 1
 def problem_detection_node(state: AgentState) -> AgentState:
     """Cluster/detect recurring problems from discussion content."""
     # In production, this would batch cluster documents. For single-doc flow, summarize.
-    llm = _get_llm()
+    llm = _get_llm(0.1)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You identify recurring problems or complaints from user discussions. Be concise."),
+        ("system", """
+            You identify the central research problem, limitation, or technical theme discussed in a document.
+            Focus on:
+            - core technical challenge
+            - research objective
+            - limitation being addressed
+            - emerging methodological direction
+            Be precise and semantically dense.
+            Avoid generic summaries.
+        """),
         ("human", "Summarize the main problem or complaint in this discussion in 1-2 sentences (limit to 500 characters):\n\n{content}"),
     ])
     chain = prompt | llm
@@ -77,7 +89,7 @@ def research_node(state: AgentState) -> AgentState:
 # 3 llm calls - 3 perspectives
 def debate_node(state: AgentState) -> AgentState:
     """Multiple perspectives on root causes."""
-    llm = _get_llm()
+    llm = _get_llm(0.7)
     ctx = state.get("research_context", "")
     problem = state.get("problem_summary", "")
 
@@ -99,7 +111,7 @@ def debate_node(state: AgentState) -> AgentState:
 # NODE 4
 def synthesis_node(state: AgentState) -> AgentState:
     """Combine research and debate into structured report."""
-    llm = _get_llm()
+    llm = _get_llm(0.2)
     ctx = state.get("research_context", "")
     problem = state.get("problem_summary", "")
     debates = state.get("debate_outputs", [])
@@ -154,6 +166,7 @@ def governance_node(state: AgentState) -> AgentState:
     return {**state, "final_report": report, "confidence_score": confidence}
 
 
+@lru_cache(maxsize=1)
 def build_workflow():
     """Build the LangGraph workflow."""
     workflow = StateGraph(AgentState)
@@ -172,6 +185,12 @@ def build_workflow():
     workflow.add_edge("governance", END)
 
     return workflow.compile()
+
+
+def clear_workflow_cache() -> None:
+    """Clear process-local graph/LLM caches, mainly for tests or config reloads."""
+    build_workflow.cache_clear()
+    _get_llm.cache_clear()
 
 
 def run_pipeline(raw_post_id: str, title: str, content: str) -> dict:
