@@ -13,6 +13,29 @@ from agents.embeddings import vector_search
 from agents.config import GROQ_API_KEY, LLM_MODEL
 
 
+RESEARCH_SYSTEM_PROMPT = """
+You are ARIE, a research synthesis engine.
+
+Role:
+- Produce cross-document technical synthesis over retrieved research abstracts/metadata.
+- Do NOT act like a chatbot. Do NOT write motivational filler.
+
+Grounding and truthfulness:
+- Use ONLY the provided context. If the context does not support a claim, say "Insufficient evidence in retrieved context."
+- Distinguish clearly between (a) evidence from the context and (b) your hypothesis/speculation.
+- Do not invent citations, numbers, datasets, benchmarks, or paper details not present in the context.
+
+Style:
+- Technical, precise, information-dense.
+- Prefer concrete mechanisms, failure modes, assumptions, and tradeoffs over generic prose.
+
+Required behavior:
+- Synthesize patterns ACROSS papers (recurrence, convergence/divergence, shifts).
+- Surface: recurring bottlenecks, emerging trends, methodology shifts, unresolved limitations, conflicting approaches, promising directions, architectural tradeoffs, evaluation weaknesses.
+- When asserting a theme/trend/conflict, cite supporting documents using their document tags (e.g., [D1], [D3]).
+""".strip()
+
+
 class AgentState(TypedDict):
     raw_post_id: str
     problem_summary: str
@@ -34,24 +57,16 @@ def _get_llm(temp: float):
 
 # NODE 1
 def summarize_problem_node(state: AgentState) -> AgentState:
-    """Cluster/detect recurring problems from discussion content."""
-    # In production, this would batch cluster documents. For single-doc flow, summarize.
+    """Derive a retrieval query for research synthesis."""
     llm = _get_llm(0.1)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """
-            You identify the central research problem, limitation, or technical theme discussed in a document.
-            Focus on:
-            - core technical challenge
-            - research objective
-            - limitation being addressed
-            - emerging methodological direction
-            Be precise and semantically dense.
-            Avoid generic summaries.
-        """),
-        ("human", "Summarize the main problem or complaint in this discussion in 1-2 sentences (limit to 500 characters):\n\n{content}"),
+        ("system", RESEARCH_SYSTEM_PROMPT + "\n\n"
+            "Task: Convert the input paper abstract/metadata into a short retrieval query that will pull related papers.\n"
+            "Output 1-2 sentences, semantically dense, <= 350 characters. No fluff."
+        ),
+        ("human", "Input (paper abstract/metadata):\n\n{content}"),
     ])
     chain = prompt | llm
-    # We need content - get from research context or a placeholder
     content = state.get("problem_summary", state.get("research_context", "No content"))
     out = chain.invoke({"content": content})
     summary = out.content.strip() if hasattr(out, "content") else str(out)
@@ -60,7 +75,7 @@ def summarize_problem_node(state: AgentState) -> AgentState:
 # NODE 2
 # this node doesnt actually use the llm. only creates research context for the next node by performing the vector search
 def research_node(state: AgentState) -> AgentState:
-    """Retrieve related discussions via vector search and build RAG context."""
+    """Retrieve related papers via vector search and build RAG context."""
     problem = state.get("problem_summary", "")
     if not problem:
         return state
@@ -76,9 +91,15 @@ def research_node(state: AgentState) -> AgentState:
     # ====================================
     context_parts = []
     sources = []
-    for d in docs:
-        context_parts.append(f"[{d['source']}] {d['title']}\n{d['content'][:1500]}")
-        sources.append({"title": d["title"], "source": d["source"], "similarity": d["similarity"]})
+    for i, d in enumerate(docs, 1):
+        doc_tag = f"D{i}"
+        context_parts.append(
+            f"[{doc_tag}] source={d['source']} | title={d['title']}\n"
+            f"{d['content'][:1500]}"
+        )
+        sources.append(
+            {"doc_tag": doc_tag, "title": d["title"], "source": d["source"], "similarity": d["similarity"]}
+        )
     return {
         **state,
         "research_context": "\n\n---\n\n".join(context_parts),
@@ -88,20 +109,27 @@ def research_node(state: AgentState) -> AgentState:
 # NODE 3
 # 3 llm calls - 3 perspectives
 def debate_node(state: AgentState) -> AgentState:
-    """Multiple perspectives on root causes."""
+    """Generate complementary analytic lenses for synthesis."""
     llm = _get_llm(0.7)
     ctx = state.get("research_context", "")
     problem = state.get("problem_summary", "")
 
     perspectives = []
     prompts = [
-        "From technical/engineering perspective, what might cause this?",
-        "From product/UX perspective, what might cause this?",
-        "From business/organizational perspective, what might cause this?",
+        "Methods + assumptions: cluster the main methodological approaches across papers; compare key design choices and assumptions; cite [D#].",
+        "Bottlenecks + limitations: identify recurring technical bottlenecks, failure modes, and unresolved limitations that appear across multiple papers; cite [D#].",
+        "Evaluation + tradeoffs: compare evaluation protocols/metrics/datasets mentioned; surface weaknesses, missing ablations, and key tradeoffs; cite [D#].",
     ]
     for p in prompts:
         out = llm.invoke([
-            HumanMessage(content=f"Problem: {problem}\n\nContext:\n{ctx}\n\n{p} Answer in 2-3 sentences."),
+            HumanMessage(content=
+                f"{RESEARCH_SYSTEM_PROMPT}\n\n"
+                f"Synthesis query: {problem}\n\n"
+                f"Retrieved context:\n{ctx}\n\n"
+                f"Task: {p}\n"
+                f"Constraints: Write 4-8 bullets. Each bullet must include at least one citation tag like [D1]. "
+                f"If evidence is thin, say so explicitly."
+            ),
         ])
         text = out.content if hasattr(out, "content") else str(out)
         perspectives.append({"perspective": p, "explanation": text})
@@ -110,27 +138,42 @@ def debate_node(state: AgentState) -> AgentState:
 
 # NODE 4
 def synthesis_node(state: AgentState) -> AgentState:
-    """Combine research and debate into structured report."""
+    """Combine retrieved context into a research synthesis report."""
     llm = _get_llm(0.2)
     ctx = state.get("research_context", "")
     problem = state.get("problem_summary", "")
     debates = state.get("debate_outputs", [])
 
-    prompt = f"""Problem: {problem}
-    Research context:
+    prompt = f"""{RESEARCH_SYSTEM_PROMPT}
+
+    Synthesis query: {problem}
+
+    Retrieved context (papers):
     {ctx}
 
-    Debate perspectives:
+    Analyst notes (may be imperfect, still cite-check them against context):
     {chr(10).join(f"- {d.get('explanation', d)}" for d in debates)}
 
-    Produce a structured JSON report:
+    Task: Produce a cross-paper research synthesis. Do NOT summarize papers one-by-one. Focus on patterns.
+
+    Output ONLY valid JSON (no markdown). Requirements:
+    - Every non-trivial claim must be supported by at least one citation tag [D#].
+    - If you cannot support a field, use an empty list and add a note in "uncertainties".
+
+    JSON schema:
     {{
-        "problem_summary": "1-2 sentence summary",
-        "evidence": ["evidence1", "evidence2"],
-        "root_causes": ["cause1", "cause2"],
-        "solutions": ["solution1", "solution2"]
+        "synthesis_query": "{problem}",
+        "recurring_bottlenecks": [{{"item": "...", "evidence": ["... [D1]", "... [D3]"]}}],
+        "emerging_trends": [{{"item": "...", "evidence": ["... [D2]"]}}],
+        "methodology_shifts": [{{"from": "...", "to": "...", "evidence": ["... [D#]"]}}],
+        "conflicting_approaches": [{{"approach_a": "...", "approach_b": "...", "core_tradeoff": "...", "evidence": ["... [D#]"]}}],
+        "evaluation_weaknesses": [{{"weakness": "...", "impact": "...", "evidence": ["... [D#]"]}}],
+        "unresolved_limitations": [{{"limitation": "...", "why_hard": "...", "evidence": ["... [D#]"]}}],
+        "promising_directions": [{{"direction": "...", "rationale": "...", "evidence": ["... [D#]"], "speculation": false}}],
+        "architectural_tradeoffs": [{{"tradeoff": "...", "when_it_wins": "...", "when_it_fails": "...", "evidence": ["... [D#]"]}}],
+        "uncertainties": ["Insufficient evidence in retrieved context for ..."]
     }}
-    Output ONLY valid JSON, no markdown."""
+    """
     out = llm.invoke([HumanMessage(content=prompt)])
     text = out.content if hasattr(out, "content") else str(out)
     try:
@@ -139,10 +182,16 @@ def synthesis_node(state: AgentState) -> AgentState:
         report = json.loads(text)
     except json.JSONDecodeError:
         report = {
-            "problem_summary": problem,
-            "evidence": [],
-            "root_causes": [],
-            "solutions": [],
+            "synthesis_query": problem,
+            "recurring_bottlenecks": [],
+            "emerging_trends": [],
+            "methodology_shifts": [],
+            "conflicting_approaches": [],
+            "evaluation_weaknesses": [],
+            "unresolved_limitations": [],
+            "promising_directions": [],
+            "architectural_tradeoffs": [],
+            "uncertainties": ["Model output was not valid JSON; insufficient reliable synthesis produced."],
         }
     return {**state, "final_report": report}
 
@@ -161,7 +210,7 @@ def governance_node(state: AgentState) -> AgentState:
         "source_count": n_sources,
     }
     report["confidence_score"] = round(confidence, 2)
-    report["sources"] = [{"title": s.get("title"), "source": s.get("source")} for s in sources[:10]]
+    report["sources"] = [{"doc_tag": s.get("doc_tag"), "title": s.get("title"), "source": s.get("source")} for s in sources[:10]]
     report["governance_checks"] = governance_checks
     return {**state, "final_report": report, "confidence_score": confidence}
 
