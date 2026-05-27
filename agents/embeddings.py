@@ -86,20 +86,22 @@ def vector_search(
     query: str,
     top_k: int = 10,
     rerank: bool = True,
-    candidate_k: int | None = None, #number of candidates to be reranked after vector search, override
+    candidate_k: int | None = None,
 ) -> List[dict]:
     """Search documents by semantic similarity, optionally reranking candidates."""
     qvec = get_embedding(query)
-     # vector search to return at least 20 rows for reranking
+    # Retrieve extra vector candidates so the reranker has useful near-neighbors.
     limit = candidate_k if candidate_k is not None else max(top_k * 4, 20)
     with get_engine().connect() as conn:
         rows = conn.execute(
             text("""
-            SELECT id, title, content, source,
-                   1 - (embedding <=> CAST(:qvec AS vector)) AS similarity
-            FROM documents
-            WHERE embedding IS NOT NULL
-            ORDER BY embedding <=> CAST(:qvec AS vector)
+            SELECT d.id, d.title, d.content, d.source,
+                   1 - (d.embedding <=> CAST(:qvec AS vector)) AS similarity,
+                   r.external_id, r.url, r.author, r.created_at, r.metadata
+            FROM documents d
+            LEFT JOIN raw_posts r ON r.id = d.raw_post_id
+            WHERE d.embedding IS NOT NULL
+            ORDER BY d.embedding <=> CAST(:qvec AS vector)
             LIMIT :top_k
             """),
             {"qvec": qvec, "top_k": limit},
@@ -111,9 +113,14 @@ def vector_search(
             "content": r[2],
             "source": r[3],
             "similarity": float(r[4]),
+            "external_id": r[5],
+            "url": r[6],
+            "author": r[7],
+            "created_at": r[8].isoformat() if r[8] else None,
+            "metadata": r[9] or {},
         }
         for r in rows
     ]
     if rerank:
         results = _rerank_results(query, results)
-    return results[:top_k] #return the closest top_k vectors
+    return results[:top_k] # return top_k closest vectors post reranking
