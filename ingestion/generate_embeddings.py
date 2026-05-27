@@ -9,6 +9,7 @@ from database.db import get_db
 
 logger = logging.getLogger(__name__)
 
+# fetch raw posts that dont have embeddings yet
 UNEMBEDDED_QUERY = """
     SELECT r.id, r.source, r.title, r.content
     FROM raw_posts r
@@ -17,7 +18,7 @@ UNEMBEDDED_QUERY = """
     )
     ORDER BY r.fetched_at
 """
-
+# fetch all raw data
 ALL_RAW_POSTS_QUERY = """
     SELECT r.id, r.source, r.title, r.content
     FROM raw_posts r
@@ -52,6 +53,7 @@ def embed_post(post: dict, force: bool, db) -> str | None:
     title = post["title"]
     content = post["content"] or title
 
+    # if force=true then delete all embeddings, re-embed all raw data
     if force:
         deleted = delete_existing_documents(db, raw_post_id)
         if deleted:
@@ -139,7 +141,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
     args = parse_args()
-    _, db = get_db()
+    db = get_db()
     try:
         run_embedding_pass(db, force=args.force)
     finally:
