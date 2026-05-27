@@ -196,7 +196,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
     args = parse_args()
-    _, db = get_db()
+    db = get_db()
     try:
         run_insight_pass(db, force=args.force)
     finally:

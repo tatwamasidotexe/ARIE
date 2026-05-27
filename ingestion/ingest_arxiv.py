@@ -39,8 +39,8 @@ ARXIV_MAX_RESULTS = int(os.getenv("ARXIV_MAX_RESULTS", "500"))
 ARXIV_DAYS_BACK = int(os.getenv("ARXIV_DAYS_BACK", "7"))
 
 # arXiv recommends >= 3s between requests; pagination respects this.
-ARXIV_REQUEST_DELAY_SEC = float(os.getenv("ARXIV_REQUEST_DELAY_SEC", "3"))
-ARXIV_PAGE_SIZE = min(100, max(1, ARXIV_MAX_RESULTS))
+ARXIV_REQUEST_DELAY_SEC = float(os.getenv("ARXIV_REQUEST_DELAY_SEC", "5"))
+ARXIV_PAGE_SIZE = min(50, max(1, ARXIV_MAX_RESULTS))
 
 ATOM_NS = "http://www.w3.org/2005/Atom"
 ARXIV_NS = "http://arxiv.org/schemas/atom"
@@ -253,7 +253,7 @@ def store_paper(db, row: dict[str, Any]) -> bool:
             VALUES (
                 :id, 'arxiv', :external_id, :title, :content, :url, :author,
                 COALESCE((:created_at)::timestamptz, NOW()),
-                :metadata::jsonb
+                CAST(:metadata AS jsonb)
             )
             ON CONFLICT (external_id) DO NOTHING
             RETURNING id
@@ -386,7 +386,7 @@ def main() -> None:
     if not DATABASE_URL:
         raise SystemExit("DATABASE_URL is not set")
 
-    _, db = get_db()
+    db = get_db()
     try:
         ingest_arxiv(db)
     finally:

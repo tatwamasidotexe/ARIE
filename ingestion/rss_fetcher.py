@@ -210,7 +210,7 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
-    _, db = get_db()
+    db = get_db()
     try:
         ingest_all_feeds(db, FEEDS)
     finally:

@@ -15,9 +15,10 @@ sys.path.insert(0, _project_root)
 sys.path.insert(0, os.path.join(_project_root, "agents"))
 
 import redis
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-from workflows.config import REDIS_URL, STREAM_NEW_POST, CONSUMER_GROUP, CONSUMER_NAME, DATABASE_URL
+from database.db import get_engine
+from workflows.config import REDIS_URL, STREAM_NEW_POST, CONSUMER_GROUP, CONSUMER_NAME
 
 
 def ensure_consumer_group(r: redis.Redis):
@@ -117,7 +118,7 @@ def process_message(engine, msg_id: str, data: dict):
 
 def run_worker():
     r = redis.from_url(REDIS_URL)
-    engine = create_engine(DATABASE_URL)
+    engine = get_engine()
     ensure_consumer_group(r)
 
     print("Worker started. Consuming from", STREAM_NEW_POST)
